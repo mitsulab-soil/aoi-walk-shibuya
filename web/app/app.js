@@ -885,8 +885,9 @@ function stepAoi(dt) {
 const EYE = 1.55;
 const CAM = { pos: new THREE.Vector3(), yaw: 0, look: 0, pitch: -.05, lastDrag: 0 };
 const SKY = { az: -.35, el: .95, dist: 1100, tAz: -.35, tEl: .95, tDist: 1100, c: new THREE.Vector3(-40, 20, 420) };
-const WALK = { speed: 1.35, moving: false, auto: false, hold: false, goal: null, ring: null };
-const FLY = { up: false, down: false, v: 12 };
+const WALK = { speed: 2.4,   // 2026-10-27 本人「移動の速さを 1.5〜2 倍に」（1.35→2.4）
+  moving: false, auto: false, hold: false, goal: null, ring: null };
+const FLY = { up: false, down: false, v: 21 };   // 10-27 1.75 倍
 const KEYS = new Set();
 const FOGS = { sky: { n: 1200, f: 5200 }, walk: { n: 160, f: 1100 }, fly: { n: 500, f: 3200 }, sight: { n: 90, f: 800 } };
 function applyFog(f) { scene.fog.near = f.n; scene.fog.far = f.f; if (BLD.mat) { BLD.mat.uniforms.fogNear.value = f.n * .4; BLD.mat.uniforms.fogFar.value = f.f; } }
