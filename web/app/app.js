@@ -175,7 +175,7 @@ async function buildBase() {
           vec3 c = cA * con * 1.05 + cB * grid * .3 + vec3(.8, .95, 1.) * grain * .55 + cB * ring * (.6 + con * 1.2 + grid * .9);
           gl_FragColor = vec4(c * k * near * feet, 1.); }` });
     const ov = new THREE.Mesh(geo, om); ov.position.y = .32; ov.renderOrder = 3; ov.name = "fusion"; ov.frustumCulled = false; world.add(ov); QW.fusion = ov; }
-  buildRoute(); buildRoads(); buildWater();   // 広場の石の面は、地面の舗装の細部とつなぎ目ができたのでやめた（10-27）
+  buildRoute(); buildRoads(); buildMarkings(); buildWater();   // 広場の石の面は、地面の舗装の細部とつなぎ目ができたのでやめた（10-27）
   if (G.near) setTimeout(() => texP(MOBILE ? "web/geo/near_lo.webp" : "web/geo/near_hi.webp").then(t => {   // 道筋のまわりだけ、細かい写真（約 0.5 m）を上に重ねる
     const n = G.near, d2 = G.dem, i0 = Math.max(0, Math.floor((n.x0 - d2.x0) / d2.cell)), i1 = Math.min(d2.nx - 1, Math.ceil((n.x1 - d2.x0) / d2.cell)), j0 = Math.max(0, Math.floor((n.z0 - d2.z0) / d2.cell)), j1 = Math.min(d2.nz - 1, Math.ceil((n.z1 - d2.z0) / d2.cell));
     const w = i1 - i0 + 1, h = j1 - j0 + 1, P = new Float32Array(w * h * 3), U = new Float32Array(w * h * 2), I = [];
@@ -236,6 +236,52 @@ function buildPlaza() {   // 渋谷：駅前の広場（OSM の歩行者の面�
     g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2)); const idx = g.index.array; for (let i = 0; i < idx.length; i += 3) { const t = idx[i + 1]; idx[i + 1] = idx[i + 2]; idx[i + 2] = t; } g.computeVertexNormals(); gs.push(g); }
   if (!gs.length) return; const pm = paveMat("G").clone(); pm.side = THREE.DoubleSide; pm.color.set("#9a958e"); const m = new THREE.Mesh(mergeIdx(gs), pm); m.name = "plaza"; m.renderOrder = 1; world.add(m); QW.plaza = gs.length;
 }
+function offsetLine(P, d) { const out = []; for (let i = 0; i < P.length; i++) { const a = P[Math.max(0, i - 1)], b = P[Math.min(P.length - 1, i + 1)]; let tx = b[0] - a[0], tz = b[1] - a[1]; const l = Math.hypot(tx, tz) || 1; out.push([P[i][0] - tz / l * d, P[i][1] + tx / l * d]); } return out; }
+function markMat(kind) {   // 路面標示（白・実寸の模式）：0＝実線、1＝破線（5 m 引いて 5 m あける）、2＝横断歩道の縞（幅 45 cm・間 45 cm）
+  const m = new THREE.MeshStandardMaterial({ color: "#d9d8d2", roughness: .7, metalness: 0, polygonOffset: true, polygonOffsetFactor: -10, polygonOffsetUnits: -10 });
+  m.onBeforeCompile = sh => { sh.fragmentShader = sh.fragmentShader.replace("#include <map_fragment>", "#include <map_fragment>\n" + (kind === 1 ? "if (fract(vUv.y / 10.) > .5) discard;" : kind === 2 ? "if (fract(vUv.x / .9) > .5) discard;" : "") + "\nfloat wear = fract(sin(dot(floor(vUv * vec2(9., 3.)), vec2(12.9898, 78.233))) * 43758.5); diffuseColor.rgb *= .86 + .14 * wear;"); };
+  m.defines = { USE_UV: "" }; m.customProgramCacheKey = () => "mark" + kind; return m;
+}
+function buildMarkings() {   // 2026-10-27 本人「道路もリアルに」：横断歩道（OSM の crossing）・車道の中央の破線と外側線・縁石（模式・実寸）。店名や字は描かない
+  const solid = [], dash = [], zebra = [], curb = [];
+  for (const r of G.roads) { if (!/^(trunk|primary|secondary|tertiary|unclassified|residential)$/.test(r.k) || r.p.length < 2) continue; const P = densify(r.p, 3);
+    if (r.w >= 7) { dash.push(ribbon(P, .15, .07, 1)); for (const sg of [-1, 1]) { const E = offsetLine(P, sg * (r.w / 2 - .35)); solid.push(ribbon(E, .15, .07, 1)); curb.push(ribbon(offsetLine(P, sg * (r.w / 2 + .12)), .24, .16, 1)); } }
+    else if (r.w >= 5) { for (const sg of [-1, 1]) curb.push(ribbon(offsetLine(P, sg * (r.w / 2 + .1)), .2, .14, 1)); } }
+  for (const x of G.xing || []) { const P = []; for (let i = 1; i + 1 < x.length; i += 2) P.push([x[i], x[i + 1]]); if (P.length > 1) zebra.push(ribbon(densify(P, 2), x[0], .075, 1)); }
+  const add = (gs, mat, nm) => { if (!gs.length) return; const m = new THREE.Mesh(mergeIdx(gs), mat); m.name = nm; m.renderOrder = 1; world.add(m); };
+  add(solid, markMat(0), "markSolid"); add(dash, markMat(1), "markDash"); add(zebra, markMat(2), "zebra");
+  add(curb, new THREE.MeshStandardMaterial({ color: "#a9a6a0", roughness: .9, map: TL.load("web/tex/pave_c.webp", t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; }), polygonOffset: true, polygonOffsetFactor: -9, polygonOffsetUnits: -9 }), "curb");
+  QW.marks = { solid: solid.length, dash: dash.length, zebra: zebra.length, curb: curb.length };
+}
+const FAC = [];
+function buildFacades() {   // 駅前の建物：外壁＝Poly Haven「White Plaster」（CC0）の肌理に、階（3.6 m）と柱間（2.4 m）ごとの窓（暗いガラス・空の映り込み）、腰の帯、屋上の縁。店名・看板・ロゴは描かない（模式）
+  if (!FAC.length) return; const P = [], U = [], N = [], I = [], RP = [], RI = []; let n = 0, rn = 0;
+  for (const { ring, y, top } of FAC) { const m = ring.length; let acc = 0;
+    for (let k = 0; k < m; k++) { const p = ring[k], q = ring[(k + 1) % m], L = Math.hypot(q.x - p.x, q.y - p.y); if (L < .3) continue;
+      let nx = q.y - p.y, nz = -(q.x - p.x); const nl = Math.hypot(nx, nz) || 1; nx /= nl; nz /= nl; if (THREE.ShapeUtils.area(ring) > 0) { nx = -nx; nz = -nz; }
+      P.push(p.x, y, p.y, q.x, y, q.y, q.x, top, q.y, p.x, top, p.y); U.push(acc, 0, acc + L, 0, acc + L, top - y, acc, top - y); for (let j = 0; j < 4; j++) N.push(nx, 0, nz);
+      I.push(n, n + 1, n + 2, n, n + 2, n + 3); n += 4; acc += L; }
+    const g = new THREE.ShapeGeometry(new THREE.Shape(ring)); const pp = g.attributes.position; for (let i = 0; i < pp.count; i++) RP.push(pp.getX(i), top, pp.getY(i)); for (const ix of g.index.array) RI.push(ix + rn); rn += pp.count; g.dispose(); }
+  const geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.Float32BufferAttribute(P, 3)); geo.setAttribute("uv", new THREE.Float32BufferAttribute(U, 2)); geo.setAttribute("normal", new THREE.Float32BufferAttribute(N, 3)); geo.setIndex(I);
+  const tex = TL.load("web/tex/plaster_c.webp", t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; });
+  const mat = new THREE.MeshStandardMaterial({ color: "#c9c6bf", roughness: .85, metalness: 0, side: THREE.DoubleSide });
+  mat.onBeforeCompile = sh => { sh.uniforms.tW = { value: tex };
+    sh.fragmentShader = sh.fragmentShader.replace("#include <common>", "#include <common>\nuniform sampler2D tW;").replace("#include <map_fragment>", `#include <map_fragment>
+      vec2 fu = vUv; float fl = floor(fu.y / 3.6); float bid = fract(sin(floor(fu.x / 40.) * 7.13 + 3.1) * 43758.5);
+      vec3 tw = texture2D(tW, fu / 9.).rgb; vec3 wall = mix(tw, vec3(dot(tw, vec3(.333))), .4) * mix(vec3(.82, .8, .76), vec3(.62, .64, .66), bid);
+      vec2 c = vec2(fract(fu.x / 2.4), fract(fu.y / 3.6)); float win = step(.12, c.x) * step(c.x, .88) * step(.3, c.y) * step(c.y, .86) * step(.5, fl);
+      float band = (1. - step(.9, fu.y)) * 0. + step(fl, .5) * .0;
+      vec3 glass = mix(vec3(.08, .1, .12), vec3(.42, .52, .6), smoothstep(.3, .86, c.y) * .55) * (.8 + .2 * fract(sin(dot(floor(fu / vec2(2.4, 3.6)), vec2(12.9, 78.2))) * 43758.5));
+      vec3 shop = vec3(.16, .17, .17) + vec3(.5, .46, .38) * step(.25, c.y) * step(c.y, .85) * step(.1, c.x) * step(c.x, .9) * .45;
+      float curtain = step(.62, bid); float mull = max(step(.94, c.x), step(.95, c.y)); vec3 cw = mix(glass * 1.1, vec3(.3, .32, .33), mull);
+      diffuseColor.rgb = fl < .5 ? shop : mix(mix(wall, glass, win), cw, curtain); float isWin = fl < .5 ? .6 : max(win, curtain * (1. - mull));   // 柱間ごとの窓のビルと、ガラスのカーテンウォールのビル`).replace("#include <roughnessmap_fragment>", "#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, .12, isWin);"); };
+  mat.defines = { USE_UV: "" }; mat.customProgramCacheKey = () => "facade";
+  const mesh = new THREE.Mesh(geo, mat); mesh.name = "facade"; world.add(mesh);
+  const rg = new THREE.BufferGeometry(); rg.setAttribute("position", new THREE.Float32BufferAttribute(RP, 3)); rg.setIndex(RI); rg.computeVertexNormals();
+  const roof = new THREE.Mesh(rg, new THREE.MeshStandardMaterial({ color: "#6f706e", roughness: .95, side: THREE.DoubleSide })); roof.name = "roof"; world.add(roof);
+  for (const { ring } of FAC) regSolidTo(ring, SOLID);   // 歩いて建物の中に入らない
+  QW.facades = FAC.length; landSweep();
+}
 function paveMat(k) {
   if (PAVE[k]) return PAVE[k];
   const ld = (u, srgb) => { const t = TL.load(u); t.wrapS = t.wrapT = THREE.RepeatWrapping; if (srgb) t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = MOBILE ? 4 : 8; return t; };
@@ -281,6 +327,7 @@ async function buildBuildings() {
     const top = low ? y + .06 : y + h, far = !box && Math.hypot(cx, cz + 300) > 900;   // 型を置いた所は、地面の地割の線だけ
     if (!low && box && NET.pw) { let mx = 0, mz = 0; for (const p of ring) { mx += p.x; mz += p.y; } mx /= n; mz /= n; const A = Math.abs(THREE.ShapeUtils.area(ring));
       if (A > 18 && A < 3000 && (false && NET.pw.some(w => mx > w.x0 && mx < w.x1 && mz > w.z0 && mz < w.z1 && inRing(w.r, mx, mz))) && !netCrosses(ring)) { addTemple(ring, y, A); continue; } }   // 2026-10-26 川越氷川神社の境内（OSM では点だけ）も寺社の型に   // 2026-10-25 寺社の境内の建物＝寺社の建物の型（模式）
+    if (!low && Math.hypot(cx, cz) < 240 && h > 4 && !(NET.segs && netCrosses(ring))) { FAC.push({ ring, y, top }); continue; }   // 2026-10-27 本人「建物をフォトリアルに」：駅前の建物は写実の外壁（窓の割り付け・CC0 の質感の模式）
     if (false && !low && !far && streetSide(ring)) {   // 渋谷：町並みは霧と線の地（不透明の壁にしない）
      addSolid(ring, y, top, SOLID, eraAt(ring)); for (let k = 0; k < n; k++) { const p = ring[k], q = ring[(k + 1) % n]; E.push(p.x, top, p.y, q.x, top, q.y); } continue; }   // 2026-10-24 本人「人が歩くところは透明にしない」＝通りに面した建物は不透明の壁に（入れない）
     for (let k = 0; k < n; k++) { const p = ring[k], q = ring[(k + 1) % n];
@@ -308,6 +355,7 @@ async function buildBuildings() {
   const fg = new THREE.BufferGeometry(); fg.setAttribute("position", new THREE.Float32BufferAttribute(F, 3)); fg.computeVertexNormals();
   const foot = new THREE.Mesh(fg, new THREE.MeshStandardMaterial({ color: "#45474a", roughness: .96, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 })); foot.renderOrder = 1; world.add(foot); BLD.foot = foot;
   BLD.mesh = m; BLD.lines = lines; BLD.mat = mat; QW.nBld = nb;
+  buildFacades();
   buildSolids(); buildTemples(); buildShrine();
 }
 /* 2026-10-26 川越氷川神社の大鳥居と杜（模式）：鳥居は木の明神鳥居の形（二本の柱・貫・笠木と島木）、杜は境内のまわりの木々。位置は OSM の神社の点と参道の向きから。一本ずつの木や、実物の寸法を写したものではない */
